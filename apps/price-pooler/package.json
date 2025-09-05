@@ -1,0 +1,9 @@
+{
+  "name": "price-poller",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot src/index.ts",
+    "start": "bun run src/index.ts"
+  }
+}
