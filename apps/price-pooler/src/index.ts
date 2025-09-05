@@ -1,7 +1,11 @@
 import WebSocket from "ws";
+import Redis from 'ioredis';
 
 const WS_URL = "wss://ws.backpack.exchange/";
 const ws = new WebSocket(WS_URL);
+const STREAM_KEY = process.env.STREAM_KEY ?? "prices:updates";
+const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
+const redis = new Redis(REDIS_URL);
 
 const MARKETS = [
   { ex: "BTC_USDC_PERP", asset: "BTC", d: 4 },
@@ -78,5 +82,5 @@ setInterval(() => {
     });
   }
   track.clear();
-  console.log(JSON.stringify(out));
+  redis.xadd(STREAM_KEY, "*", "payload", JSON.stringify(out)).catch(err =>console.error("[redis:xadd]", err));
 }, 100);
