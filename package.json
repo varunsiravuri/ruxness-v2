@@ -22,8 +22,10 @@
     "packages/*"
   ],
   "dependencies": {
+    "@types/mongodb": "^4.0.7",
     "@types/ws": "^8.18.1",
     "ioredis": "^5.7.0",
+    "mongodb": "^6.19.0",
     "ws": "^8.18.3"
   }
 }
