@@ -1,109 +1,30 @@
+// src/index.ts
 import express from "express";
-import { createClient } from "redis";
-import { RedisSubscriber, CALLBACK_QUEUE } from "./redisSubscriber";
+import { makeBus } from "./lib/bus";
+import { tradeRoutes } from "./routes/trades";
+import { balanceRoutes } from "./routes/balance";
+import { supportedAssetsRoutes } from "./routes/supportedAssets";
 
-
-export const CREATE_ORDER_QUEUE = "trade-stream";
+const PORT = Number(process.env.PORT ?? 3000);
+const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
 
 async function main() {
   const app = express();
   app.use(express.json());
 
-  const client = createClient({
-    url: process.env.REDIS_URL ?? "redis://localhost:6380",
-  });
-  await client.connect();
+  // bus for handling redis clients and subscriber 
+  const bus = makeBus(REDIS_URL);
+  await bus.start();
 
-  const redisSubscriber = new RedisSubscriber({
-    url: process.env.REDIS_URL ?? "redis://localhost:6380",
-  });
+  // routes 
+  const v1 = express.Router();
+  v1.use("/trade", tradeRoutes(bus));
+  v1.use("/balance", balanceRoutes(bus));
+  v1.use("/", supportedAssetsRoutes());
+  app.use("/api/v1", v1);
 
-  app.get("/trade/open", async (req, res) => {
-    const startTime = Date.now();
-    const asset = String(req.query.asset ?? "");
-    const qty = Number(req.query.qty ?? NaN);
-    const type = String(req.query.type ?? "");
-
-    if (!asset || !Number.isFinite(qty) || !type) {
-      return res.status(400).json({ error: "asset, qty, type are required" });
-    }
-
-    const id = crypto.randomUUID();
-
-    // Enqueue order for the trade engine
-    const payload = {
-      kind: "create-order" as const,
-      asset,
-      qty,
-      type,
-      id,
-      ts: Date.now(),
-    };
-
-    await client.xAdd(CREATE_ORDER_QUEUE, "*", {
-      message: JSON.stringify(payload),
-    });
-
-    try {
-      // Wait for the engine to reply on the callback queue
-      const responseFromEngine = await redisSubscriber.waitForMessage(id, 5000);
-
-      return res.json({
-        ok: true,
-        latency_ms: Date.now() - startTime,
-        engine: responseFromEngine,
-      });
-    } catch (e) {
-      return res.status(504).json({
-        ok: false,
-        error: "Engine did not respond in time",
-      });
-    }
-  });
-
-  // Stub for closing a trade (wire similarly to /trade/open)
-  app.post("/trade/close", async (req, res) => {
-    const { asset, qty, reason } = req.body ?? {};
-    if (!asset || !qty) {
-      return res.status(400).json({ error: "asset and qty are required" });
-    }
-    const id = crypto.randomUUID();
-    const payload = {
-      kind: "close-order" as const,
-      asset,
-      qty,
-      reason: reason ?? null,
-      id,
-      ts: Date.now(),
-    };
-
-    await client.xAdd(CREATE_ORDER_QUEUE, "*", {
-      message: JSON.stringify(payload),
-    });
-
-    try {
-      const responseFromEngine = await redisSubscriber.waitForMessage(id, 5000);
-      return res.json({ ok: true, engine: responseFromEngine });
-    } catch {
-      return res.status(504).json({ ok: false, error: "Engine timeout" });
-    }
-  });
-
-  const port = Number(process.env.PORT ?? 3000);
-  app.listen(port, () => {
-    console.log(
-      `[backend] HTTP on :${port} | using queues: { orders: "${CREATE_ORDER_QUEUE}", callbacks: "${CALLBACK_QUEUE}" }`
-    );
-  });
-
-  // graceful shutdown
-  process.on("SIGINT", async () => {
-    try {
-      await client.quit();
-      await redisSubscriber.quit();
-    } finally {
-      process.exit(0);
-    }
+  app.listen(PORT, () => {                           // starting the server 
+    console.log(`[backend] listening on :${PORT}`);  
   });
 }
 
