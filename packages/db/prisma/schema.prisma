@@ -1,0 +1,46 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Side {
+  long
+  short
+}
+
+model User {
+  id              String          @id @default(uuid())
+  email           String          @unique
+  lastLoggedIn    DateTime?
+  existingTrades  ExistingTrade[]
+}
+
+model Asset {
+  id             String          @id @default(uuid())
+  symbol         String          @unique
+  imageUrl       String
+  name           String
+  decimals       Int
+  existingTrades ExistingTrade[]
+}
+
+model ExistingTrade {
+  id          String   @id @default(uuid())
+  openPrice   Float
+  closePrice  Float?
+  leverage    Float
+  pnl         Float?
+  liquidated  Boolean  @default(false)
+
+  user    User   @relation(fields: [userId], references: [id])
+  userId  String
+
+  asset   Asset  @relation(fields: [assetId], references: [id])
+  assetId String
+
+  createdAt DateTime @default(now())
+}
