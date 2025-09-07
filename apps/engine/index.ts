@@ -1,4 +1,3 @@
-// engine/index.ts
 import { createClient } from "redis";
 import { MongoClient } from "mongodb";
 
@@ -6,11 +5,9 @@ const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
 const MONGO_URI = process.env.MONGO_URI ?? "mongodb://localhost:27017";
 const DB_NAME = process.env.DB_NAME ?? "ruxness";
 
-// --- Redis ---
 const client = createClient({ url: REDIS_URL });
 await client.connect();
 
-// --- Mongo (for price snapshots) ---
 const mongo = new MongoClient(MONGO_URI);
 await mongo.connect();
 const snaps = mongo.db(DB_NAME).collection("price_snapshots");
@@ -21,17 +18,17 @@ async function getPrice(asset: string): Promise<number> {
   return doc.price / Math.pow(10, doc.decimal);
 }
 
-// simple demo balance
-const balances: Record<string, { usd: number }> = { user1: { usd: 1000 } };
+
+const balances: Record<string, { usd: number }> = { user1: { usd: 5000 } };
 
 async function run() {
-  let lastId = "$"; // only new orders
+  let lastId = "$"; 
 
   for (;;) {
     const resp = (await client.xRead([{ key: "trade-stream", id: lastId }], {
       BLOCK: 0,
       COUNT: 10,
-    })) as any; // <-- keep it simple
+    })) as any; 
 
     if (!resp || !resp[0]?.messages?.length) continue;
 

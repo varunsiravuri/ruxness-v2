@@ -4,9 +4,11 @@ import { makeBus } from "./lib/bus";
 import { tradeRoutes } from "./routes/trades";
 import { balanceRoutes } from "./routes/balance";
 import { supportedAssetsRoutes } from "./routes/supportedAssets";
+import { prisma, Side } from "@ruxness/db";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
+const user = await prisma.user.findFirst();
 
 async function main() {
   const app = express();
