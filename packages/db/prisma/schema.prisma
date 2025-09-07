@@ -16,6 +16,7 @@ model User {
   id              String          @id @default(uuid())
   email           String          @unique
   lastLoggedIn    DateTime?
+  usdBalanceCents Int      @default(0)
   existingTrades  ExistingTrade[]
 }
 
@@ -35,10 +36,11 @@ model ExistingTrade {
   leverage    Float
   pnl         Float?
   liquidated  Boolean  @default(false)
-
+  side        Side
+  qty         Float
   user    User   @relation(fields: [userId], references: [id])
   userId  String
-
+  marginCents  Int
   asset   Asset  @relation(fields: [assetId], references: [id])
   assetId String
 

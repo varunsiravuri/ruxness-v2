@@ -1,36 +1,41 @@
+
 import { createClient } from "redis";
-import { MongoClient } from "mongodb";
+import { startSnapshotter } from "./snapShotter";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
-const MONGO_URI = process.env.MONGO_URI ?? "mongodb://localhost:27017";
-const DB_NAME = process.env.DB_NAME ?? "ruxness";
+const ORDERS_STREAM = "trade-stream";
+const CALLBACK_STREAM = "callback-queue";
 
-const client = createClient({ url: REDIS_URL });
-await client.connect();
-
-const mongo = new MongoClient(MONGO_URI);
-await mongo.connect();
-const snaps = mongo.db(DB_NAME).collection("price_snapshots");
-
-async function getPrice(asset: string): Promise<number> {
-  const doc = (await snaps.findOne({ asset })) as any;
-  if (!doc) throw new Error(`No snapshot for asset ${asset}`);
-  return doc.price / Math.pow(10, doc.decimal);
-}
-
+const r = createClient({ url: REDIS_URL });
+await r.connect();
 
 const balances: Record<string, { usd: number }> = { user1: { usd: 5000 } };
 
+async function getPrice(asset: string): Promise<number> {
+  const key = `px:${asset.toUpperCase()}`;
+  const h = await r.hGetAll(key);
+  if (!h?.price || !h?.decimal) {
+    throw new Error(`price not available for ${asset} (key ${key})`);
+  }
+  const p = Number(h.price); 
+  const d = Number(h.decimal); 
+  return p / Math.pow(10, d); 
+}
+startSnapshotter();
+
 async function run() {
-  let lastId = "$"; 
+  let lastId = "$";
 
   for (;;) {
-    const resp = (await client.xRead([{ key: "trade-stream", id: lastId }], {
+    const resp = (await r.xRead([{ key: ORDERS_STREAM, id: lastId }], {
       BLOCK: 0,
       COUNT: 10,
-    })) as any; 
+    })) as Array<{
+      name: string;
+      messages: Array<{ id: string; message: any }>;
+    }> | null;
 
-    if (!resp || !resp[0]?.messages?.length) continue;
+    if (!resp?.[0]?.messages?.length) continue;
 
     for (const m of resp[0].messages) {
       lastId = m.id;
@@ -48,10 +53,9 @@ async function run() {
         const price = await getPrice(asset);
         const cost = qty * price;
 
-        balances.user1 ??= { usd: 0 };
-        balances.user1.usd -= cost;
+        (balances.user1 ??= { usd: 0 }).usd -= cost;
 
-        await client.xAdd("callback-queue", "*", {
+        await r.xAdd(CALLBACK_STREAM, "*", {
           message: JSON.stringify({
             id: order.id,
             status: "accepted",
@@ -64,7 +68,7 @@ async function run() {
           }),
         });
       } catch (err: any) {
-        await client.xAdd("callback-queue", "*", {
+        await r.xAdd(CALLBACK_STREAM, "*", {
           message: JSON.stringify({
             id: order?.id ?? null,
             status: "rejected",
@@ -80,4 +84,12 @@ async function run() {
 run().catch((e) => {
   console.error("[engine] fatal", e);
   process.exit(1);
+});
+
+process.on("SIGINT", async () => {
+  try {
+    await r.quit();
+  } finally {
+    process.exit(0);
+  }
 });

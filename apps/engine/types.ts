@@ -12,4 +12,14 @@ export type Cmd =
   | { id: string; kind: "get-balance-usd" }
   | { id: string; kind: "get-balances" };
 
+export type CreatePositionCmd = {
+  asset: string;
+  margin: number;
+  leverage: number;
+  type: "buy" | "sell";
+};
+
+export type ClosePositionCmd = {
+  orderId: string;
+};
 export type Reply = any;
