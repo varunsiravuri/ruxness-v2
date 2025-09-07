@@ -1,10 +1,9 @@
-// src/index.ts
 import express from "express";
 import { makeBus } from "./lib/bus";
 import { tradeRoutes } from "./routes/trades";
 import { balanceRoutes } from "./routes/balance";
 import { supportedAssetsRoutes } from "./routes/supportedAssets";
-import { prisma, Side } from "@ruxness/db";
+import { prisma } from "@ruxness/db";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
@@ -14,19 +13,17 @@ async function main() {
   const app = express();
   app.use(express.json());
 
-  // bus for handling redis clients and subscriber 
-  const bus = makeBus(REDIS_URL);
+  const bus = makeBus(REDIS_URL); // bus for handling redis clients and subscriber
   await bus.start();
 
-  // routes 
   const v1 = express.Router();
   v1.use("/trade", tradeRoutes(bus));
   v1.use("/balance", balanceRoutes(bus));
   v1.use("/", supportedAssetsRoutes());
   app.use("/api/v1", v1);
 
-  app.listen(PORT, () => {                           // starting the server 
-    console.log(`[backend] listening on :${PORT}`);  
+  app.listen(PORT, () => {
+    console.log(`[backend] listening on :${PORT}`);
   });
 }
 
