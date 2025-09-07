@@ -18,7 +18,7 @@ export class RedisSubscriber {
 
   constructor(opts: SubscriberOpts = {}) {
     this.client = createClient({
-      url: opts.url ?? "redis://localhost:6379",
+      url: opts.url ?? "redis://localhost:6380",
     });
     this.client
       .connect()

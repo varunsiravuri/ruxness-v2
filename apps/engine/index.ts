@@ -2,7 +2,7 @@
 import { createClient } from "redis";
 import { MongoClient } from "mongodb";
 
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
+const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
 const MONGO_URI = process.env.MONGO_URI ?? "mongodb://localhost:27017";
 const DB_NAME = process.env.DB_NAME ?? "ruxness";
 

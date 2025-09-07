@@ -10,12 +10,12 @@ async function main() {
   app.use(express.json());
 
   const client = createClient({
-    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    url: process.env.REDIS_URL ?? "redis://localhost:6380",
   });
   await client.connect();
 
   const redisSubscriber = new RedisSubscriber({
-    url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    url: process.env.REDIS_URL ?? "redis://localhost:6380",
   });
 
   app.get("/trade/open", async (req, res) => {
