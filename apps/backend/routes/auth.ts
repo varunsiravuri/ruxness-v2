@@ -49,6 +49,7 @@ export function authRoutes(redis: Redis) {
 
     const sid = randomUUID();
     await redis.setEx(`auth:sid:${sid}`, SESSION_TTL_S, email);
+    console.log("[auth] wrote session", `auth:sid:${sid}`, "->", email);
 
     res.cookie(COOKIE_NAME, sid, {
       httpOnly: true,

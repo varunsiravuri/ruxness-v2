@@ -9,7 +9,7 @@ export function balanceRoutes(bus: Bus) {
     try {
       const userId = (_req as any).user?.id;
       const reply = await bus.send("get-balance-usd", {userId});
-      return res.json({ balance: reply.balance });
+      return res.json({ balance: reply.balance ?? 0 });
 
     } catch {
       return res.status(504).json({ error: "engine timeout" });

@@ -7,6 +7,7 @@ export function tradeRoutes(
 
   // create orderss chai aur cofeeee
   r.post("/create", async (req, res) => {
+    const userId = (req as any).user.id;
     const { asset, type, margin, leverage, slippage } = req.body ?? {};
     if (
       !asset ||
@@ -23,12 +24,13 @@ export function tradeRoutes(
     }
     try {
       const reply = await bus.send("create-position", {
+        userId,
         asset,
         type,
         margin,
         leverage,
         slippage,
-      });
+      },);
       return res.json({ orderId: reply.orderId });
     } catch {
       return res.status(504).json({ error: "engine timeout" });
@@ -37,10 +39,11 @@ export function tradeRoutes(
 
   //closing the orders , last order chai .
   r.post("/close", async (req, res) => {
+    const userId = (req as any).user.id;
     const { orderId } = req.body ?? {};
     if (!orderId) return res.status(400).json({ error: "orderId required" });
     try {
-      const reply = await bus.send("close-position", { orderId });
+      const reply = await bus.send("close-position", { userId,orderId });
       return res.json(reply);
     } catch {
       return res.status(504).json({ error: "engine timeout" });
