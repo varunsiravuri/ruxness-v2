@@ -5,6 +5,7 @@ import { balanceRoutes } from "./routes/balance";
 import { supportedAssetsRoutes } from "./routes/supportedAssets";
 import { prisma } from "@ruxness/db";
 import {authRoutes} from "./routes/auth";
+import {makeRequireUser} from "./middleware/requireUser";
  
 const PORT = Number(process.env.PORT ?? 3000);
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
@@ -16,11 +17,12 @@ async function main() {
 
   const bus = makeBus(REDIS_URL);
   await bus.start();
-
+  
+  const requireUser = makeRequireUser(bus.redis);
   const v1 = express.Router();
   v1.use("/auth" , authRoutes(bus.redis));
-  v1.use("/trade", tradeRoutes(bus));
-  v1.use("/balance", balanceRoutes(bus));
+  v1.use("/trade",requireUser, tradeRoutes(bus));
+  v1.use("/balance",requireUser,balanceRoutes(bus));
   v1.use("/", supportedAssetsRoutes());
   app.use("/api/v1", v1);
 

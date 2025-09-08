@@ -12,7 +12,7 @@ export async function sendMagicLink(email: string, url: string) {
       <div style="font-family:system-ui, -apple-system, Segoe UI, Roboto">
         <p>Click to sign in:</p>
         <p><a href="${url}">${url}</a></p>
-        <p>This link expires in 10 minutes.</p>
+        <p>link expires in 5 mins Bro , jaldi Karo .</p>
       </div>
     `,
   });
