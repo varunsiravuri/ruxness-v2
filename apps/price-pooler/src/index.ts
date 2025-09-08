@@ -62,7 +62,7 @@ ws.addEventListener("error", (e) => console.error("[ws:error]", e));
 ws.addEventListener("close", (e) => console.warn("[ws:close]", e.code, e.reason));
 
 
-setInterval(() => {
+setInterval(async () => {
   if (track.size === 0) return;
   const out = {
     price_updates: [] as Array<{
@@ -71,16 +71,33 @@ setInterval(() => {
       decimal: number;
     }>,
   };
+  const pipe = redis.pipeline();
   for (const a of track) {
     const r = latest[a]!;
     const d = MARKETS.find((x) => x.asset === a)!.d;
     const mid = (r.bid + r.ask) / 2;
+    const ts = Date.now();
     out.price_updates.push({
       asset: a,
       price: Math.round(mid * 10 ** d),
       decimal: d,
     });
+    const key = `px:${a}`;
+    pipe.hset(key, {
+      price: Math.round(mid * 10 ** d),
+      decimal: d,
+      ts: String(ts),
+    });
+
+    pipe.expire(key, 60);
+
   }
   track.clear();
-  redis.xadd(STREAM_KEY, "*", "payload", JSON.stringify(out)).catch(err =>console.error("[redis:xadd]", err));
+  pipe.xadd(STREAM_KEY, "*", "payload", JSON.stringify(out));
+  
+  try {
+    await pipe.exec();
+  } catch (err) {
+    console.error("[poller] pipeline error", err);
+  }
 }, 100);

@@ -16,8 +16,10 @@ export function makeGetPrice(redisUrl: string) {
     if (!h?.price || !h?.decimal) {
       throw new Error(`price not available for ${asset} (px:${asset})`);
     }
-    const p = Number(h.price);
-    const d = Number(h.decimal);
-    return p / Math.pow(10, d);
+    const age =Date.now() - Number(h.ts);
+    if (age > 60_000) {
+      throw new Error(`price for ${asset} is stale (${age}ms)`);
+    }
+    return Number(h.price) / Math.pow(10, Number(h.decimal));
   };
 }

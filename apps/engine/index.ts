@@ -1,4 +1,3 @@
-
 import { createClient } from "redis";
 import { startSnapshotter } from "./snapShotter";
 
@@ -9,7 +8,7 @@ const CALLBACK_STREAM = "callback-queue";
 const r = createClient({ url: REDIS_URL });
 await r.connect();
 
-const balances: Record<string, { usd: number }> = { user1: { usd: 5000 } };
+const balances: Record<string, { usd: number }> = {};
 
 async function getPrice(asset: string): Promise<number> {
   const key = `px:${asset.toUpperCase()}`;
@@ -17,10 +16,22 @@ async function getPrice(asset: string): Promise<number> {
   if (!h?.price || !h?.decimal) {
     throw new Error(`price not available for ${asset} (key ${key})`);
   }
-  const p = Number(h.price); 
-  const d = Number(h.decimal); 
-  return p / Math.pow(10, d); 
+  const p = Number(h.price);
+  const d = Number(h.decimal);
+  return p / Math.pow(10, d);
 }
+
+function ensureUser(userId: string) {
+  if (!balances[userId]) balances[userId] = { usd: 5000 };
+  return balances[userId];
+}
+
+async function reply(id: string, payload: any) {
+  await r.xAdd(CALLBACK_STREAM, "*", {
+    message: JSON.stringify({ id, ...payload }),
+  });
+}
+
 startSnapshotter();
 
 async function run() {
@@ -41,40 +52,80 @@ async function run() {
       lastId = m.id;
 
       const raw = (m.message as any).message ?? m.message;
-      const order = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const msg = typeof raw === "string" ? JSON.parse(raw) : raw;
 
       try {
-        const asset = String(order.asset ?? "").toUpperCase();
-        const qty = Number(order.qty);
-        if (!asset || !Number.isFinite(qty) || qty <= 0) {
-          throw new Error("invalid order: asset and positive qty required");
+        const kind = msg.kind as string;
+        switch (kind) {
+          case "getBalanceUsd": {
+            const userId = String(msg.userId ?? "user1");
+            const acct = ensureUser(userId);
+            await reply(msg.id, { balance: Math.round(acct.usd * 100) });
+          }
+
+          case "get-balances": {
+            await reply(msg.id, {
+              BTC: { balance: 0, decimals: 4 },
+              ETH: { balance: 0, decimals: 4 },
+              SOL: { balance: 0, decimals: 6 },
+            });
+            break;
+          }
+
+          case "create-position": {
+            const userId = String(msg.userId ?? "user1");
+            const asset = String(msg.asset ?? "").toUpperCase();
+            const type = String(msg.type ?? "").toLowerCase();
+            const margin = Number(msg.margin);
+            const leverage = Number(msg.leverage);
+
+            if (
+              !asset ||
+              !["long", "short"].includes(type) ||
+              !Number.isFinite(margin) ||
+              !Number.isFinite(leverage) ||
+              margin <= 0 ||
+              leverage <= 0
+            ) {
+              throw new Error("invalid create-position payload");
+            }
+
+            const px = await getPrice(asset);
+            const notional = margin * leverage;
+            const qty = notional / px;
+            const acct = ensureUser(userId);
+            acct.usd -= margin;
+            await reply(msg.id, {
+              orderId: msg.id,
+              asset,
+              type,
+              qty,
+              price: px,
+              margin,
+              leverage,
+              balance_usd: acct.usd,
+            });
+            break;
+          }
+          case "close-position": {
+            const userId = String(msg.userId ?? "user1");
+            const orderId = String(msg.orderId ?? "");
+            if (!orderId) throw new Error("orderId required");
+
+            const acct = ensureUser(userId);
+            acct.usd += 100;
+
+            await reply(msg.id, { ok: true, orderId, balance_usd: acct.usd });
+            break;
+          }
+          default:
+            await reply(msg.id, { error: `unknown kind: ${kind}` });
         }
-
-        const price = await getPrice(asset);
-        const cost = qty * price;
-
-        (balances.user1 ??= { usd: 0 }).usd -= cost;
-
-        await r.xAdd(CALLBACK_STREAM, "*", {
-          message: JSON.stringify({
-            id: order.id,
-            status: "accepted",
-            asset,
-            qty,
-            price,
-            cost,
-            balance_usd: balances.user1.usd,
-            ts: Date.now(),
-          }),
-        });
       } catch (err: any) {
-        await r.xAdd(CALLBACK_STREAM, "*", {
-          message: JSON.stringify({
-            id: order?.id ?? null,
-            status: "rejected",
-            error: String(err?.message ?? err),
-            ts: Date.now(),
-          }),
+        await reply((msg && msg.id) || "n/a", {
+          status: "rejected",
+          error: String(err?.message ?? err),
+          ts: Date.now(),
         });
       }
     }
