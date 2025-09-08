@@ -5,7 +5,7 @@ export const resend = new Resend(RESEND_API_KEY);
 
 export async function sendMagicLink(email: string, url: string) {
   await resend.emails.send({
-    from: "onboarding@resend.dev",
+    from: "v4run.me",
     to: email,
     subject: "Your sign-in link",
     html: `
