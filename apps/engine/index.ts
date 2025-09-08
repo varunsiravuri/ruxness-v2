@@ -61,6 +61,7 @@ async function run() {
             const userId = String(msg.userId ?? "user1");
             const acct = ensureUser(userId);
             await reply(msg.id, { balance: Math.round(acct.usd * 100) });
+            break;
           }
 
           case "get-balances": {
