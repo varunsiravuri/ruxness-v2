@@ -1,4 +1,5 @@
 import express from "express";
+import "dotenv/config";
 import { makeBus } from "./lib/bus";
 import { tradeRoutes } from "./routes/trades";
 import { balanceRoutes } from "./routes/balance";
@@ -30,6 +31,14 @@ async function main() {
     console.log(`[backend] listening on :${PORT}`);
   });
 }
+
+function mask(k?: string) {
+  if (!k) return "(missing)";
+  return `${k.slice(0, 4)}…${k.slice(-4)} (len ${k.length})`;
+}
+console.log("[env] RESEND_API_KEY:", mask(process.env.RESEND_API_KEY));
+
+
 
 main().catch((err) => {
   console.error("[backend] fatal", err);

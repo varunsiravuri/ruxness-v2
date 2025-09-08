@@ -5,20 +5,21 @@ type Bus = ReturnType<typeof import("../lib/bus").makeBus>;
 export function balanceRoutes(bus: Bus) {
   const r = Router();
 
-  //balnce  in  usd 
   r.get("/usd", async (_req, res) => {
     try {
-      const reply = await bus.send("get-balance-usd", {});
+      const userId = (_req as any).user?.id;
+      const reply = await bus.send("get-balance-usd", {userId});
       return res.json({ balance: reply.balance });
 
     } catch {
       return res.status(504).json({ error: "engine timeout" });
     }
   });
-  // get all blncs
+
   const allBalances = async (_req: any, res: any) => {
     try {
-      const reply = await bus.send("get-balances", {});
+      const userId = (_req as any).user?.id;
+      const reply = await bus.send("get-balances", { userId });
       return res.json(reply);
 
     } catch {

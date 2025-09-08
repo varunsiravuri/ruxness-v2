@@ -9,7 +9,7 @@ type Redis = RedisClientType;
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 const COOKIE_NAME = process.env.COOKIE_NAME ?? "ssid";
 const TOKEN_TTL_S = 5 * 60; 
-const SESSION_TTL_S = 2 * 24 * 3600;
+const SESSION_TTL_S = 5 * 24 * 3600;
 
 export function authRoutes(redis: Redis) {
   const r = Router();
