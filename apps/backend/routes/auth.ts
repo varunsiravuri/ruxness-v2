@@ -1,31 +1,31 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
-import { Resend } from "resend";
+import { randomUUID } from "node:crypto";
 import { prisma } from "@ruxness/db";
+import { sendMagicLink } from "../lib/mail";
+import type { RedisClientType } from "redis";
 
-export function authRoutes(redis: any) {
+type Redis = RedisClientType;
+
+const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
+const COOKIE_NAME = process.env.COOKIE_NAME ?? "ssid";
+const TOKEN_TTL_S = 5 * 60; 
+const SESSION_TTL_S = 2 * 24 * 3600;
+
+export function authRoutes(redis: Redis) {
   const r = Router();
-  const resend = new Resend(process.env.RESEND_API_KEY!);
 
   r.post("/magic", async (req, res, next) => {
     try {
       const email = String(req.body?.email ?? "")
         .trim()
         .toLowerCase();
-      if (!email.includes("@"))
-        return res.status(400).json({ error: "invalid email" });
-
+      if (!email || !email.includes("@")) {
+        return res.status(400).json({ ok: false, error: "invalid email" });
+      }
       const token = randomUUID();
-      await redis.setEx(`auth:token:${token}`, 300, email);
-      const link = `${process.env.APP_URL}/api/v1/auth/callback?token=${token}`;
-
-      await resend.emails.send({
-        from: "onboarding@resend.dev",
-        to: email,
-        subject: "Sign in",
-        html: `<a href="${link}">Click to sign in</a>`,
-      });
-
+      await redis.setEx(`auth:token:${token}`, TOKEN_TTL_S, email);
+      const url = `${APP_URL}/api/v1/auth/callback?token=${token}`;
+      await sendMagicLink(email, url);
       res.json({ ok: true });
     } catch (e) {
       next(e);
@@ -34,9 +34,12 @@ export function authRoutes(redis: any) {
 
   r.get("/callback", async (req, res) => {
     const token = String(req.query?.token ?? "");
-    const email = await redis.get(`auth:token:${token}`);
-    if (!email) return res.status(400).send("Invalid or expired link");
+    if (!token) return res.status(400).send("Token is Missing Bro");
 
+    const email = await redis.get(`auth:token:${token}`);
+    if (!email) return res.status(400).send("Link Expired Bhaiya");
+    await redis.del(`auth:token:${token}`);
+    
     await prisma.user.upsert({
       where: { email },
       update: {},
@@ -44,10 +47,20 @@ export function authRoutes(redis: any) {
     });
 
     const sid = randomUUID();
-    await redis.setEx(`auth:sid:${sid}`, 2 * 86400, email);
+    await redis.setEx(`auth:sid:${sid}`, SESSION_TTL_S, email);
 
-    res.cookie("ssid", sid, { httpOnly: true, sameSite: "lax" });
-    res.send("Signed in ✔️");
+    res.cookie(COOKIE_NAME, sid, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: SESSION_TTL_S * 1000,
+      path: "/",
+    });
+
+    res.status(200).send(`<html><body style="font-family:system-ui">
+               <h3>Signed in</h3>
+               <p>You Can Close this Bhaiya</p>
+             </body></html>`);
   });
 
   return r;

@@ -4,7 +4,8 @@ import { tradeRoutes } from "./routes/trades";
 import { balanceRoutes } from "./routes/balance";
 import { supportedAssetsRoutes } from "./routes/supportedAssets";
 import { prisma } from "@ruxness/db";
-
+import {authRoutes} from "./routes/auth";
+ 
 const PORT = Number(process.env.PORT ?? 3000);
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
 const user = await prisma.user.findFirst();
@@ -13,10 +14,11 @@ async function main() {
   const app = express();
   app.use(express.json());
 
-  const bus = makeBus(REDIS_URL); // bus for handling redis clients and subscriber
+  const bus = makeBus(REDIS_URL);
   await bus.start();
 
   const v1 = express.Router();
+  v1.use("/auth" , authRoutes(bus.redis));
   v1.use("/trade", tradeRoutes(bus));
   v1.use("/balance", balanceRoutes(bus));
   v1.use("/", supportedAssetsRoutes());

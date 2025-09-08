@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@ruxness/db": "workspace:*",
+    "cookie": "^1.0.2",
     "express": "^5.1.0",
     "redis": "^5.8.2",
     "resend": "^6.0.2"
