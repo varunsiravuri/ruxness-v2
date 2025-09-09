@@ -1,8 +1,7 @@
-import type { ClosePositionCmd } from "../types";
 import { prisma } from "@ruxness/db";
-
+import type { CloseCmd } from "../types";
 export async function closePosition(
-  cmd: ClosePositionCmd,
+  cmd: CloseCmd,
   getPx: (a: string) => Promise<number>
 ) {
   const tr = await prisma.existingTrade.findUnique({
