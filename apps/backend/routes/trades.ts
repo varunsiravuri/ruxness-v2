@@ -4,14 +4,14 @@ type Bus = ReturnType<typeof makeBus>;
 
 export function tradeRoutes(bus: Bus) {
   const r = Router();
+
   r.post("/create", async (req, res) => {
     try {
       const userId = (req as any).user?.id;
-      const { asset, type, margin, leverage, slippage } = req.body ?? {};
-
-      if (!userId)
+      if (!userId) {
         return res.status(401).json({ ok: false, error: "Session nahi hai " });
-
+      }
+      const { asset, type, margin, leverage, slippage } = req.body ?? {};
       if (
         !asset ||
         !["long", "short"].includes(type) ||
@@ -20,11 +20,11 @@ export function tradeRoutes(bus: Bus) {
       ) {
         return res.status(400).json({
           error:
-            "asset, type('long'|'short'), margin(number), leverage(number) required",
+            "asset, type('long'|'short'), margin(number), leverage(number)",
         });
       }
 
-      const reply = await bus.send("create-position", {
+      const reply = await bus.send("trade-open", {
         userId,
         asset,
         type,
@@ -33,7 +33,7 @@ export function tradeRoutes(bus: Bus) {
         slippage,
       });
 
-      return res.json({ orderId: reply.orderId });
+      return res.json({ orderId: reply?.orderId });
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const code = /timeout/i.test(msg) ? 504 : 400;
@@ -44,14 +44,16 @@ export function tradeRoutes(bus: Bus) {
   r.post("/close", async (req, res) => {
     try {
       const userId = (req as any).user?.id;
-      const { orderId } = req.body ?? {};
-
-      if (!userId)
+      if (!userId) {
         return res.status(401).json({ ok: false, error: "Session nahi hai " });
-      if (!orderId) return res.status(400).json({ error: "orderId required" });
+      }
+      const { orderId } = req.body ?? {};
+      if (!orderId) {
+        return res.status(400).json({ error: "orderId required" });
+      }
 
-      const reply = await bus.send("close-position", { userId, orderId });
-      return res.json(reply);
+      const reply = await bus.send("trade-close", { userId, orderId });
+      return res.json(reply ?? { ok: true });
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const code = /timeout/i.test(msg) ? 504 : 400;
