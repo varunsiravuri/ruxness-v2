@@ -1,54 +1,50 @@
 export type Side = "long" | "short";
 
-export type PriceUpdate = {
-  asset: string; 
-  price: number; 
-  decimal: number;
-};
-
-export type StreamPriceBatch = {
-  price_updates: PriceUpdate[];
-};
-
-export type Bal = { balance: number; decimal: number };
-export type Px = { mid: number; decimal: number; ts: number };
-
-export type OpenOrder = {
-  id: string;
-  userId: string;
-  asset: string;
-  side: Side;
-  leverage: number;
-  margin: number; 
-  quantity: number; 
-  openPrice: number;
-  closePrice?: number; 
-  pnl?: number;
-  liquidated?: boolean;
-  decimal: number;
-};
-
-export type CreateCmd = {
-  kind: "trade-open";
-  id: string; 
+export type CreatePositionCmd = {
   userId: string;
   asset: string;
   type: Side; 
   margin: number; 
-  leverage: number;
+  leverage: number; 
   slippage?: number; 
-  expectedPrice?: number;
 };
 
-export type CloseCmd = {
-  kind: "trade-close";
-  id: string;
+export type ClosePositionCmd = {
   userId: string;
   orderId: string;
 };
 
 export type GetUserBalCmd = {
-  kind: "get-user-bal";
-  id: string;
   userId: string;
 };
+
+export type PriceUpdate = {
+  symbol: string; 
+  bid: number; 
+  ask: number;
+  decimal: number;
+  ts: number;
+};
+
+export type OpenOrder = {
+  id: string;
+  userId: string;
+  asset: string;
+  type: Side;
+  margin: number;
+  leverage: number;
+  qty: number;
+  openPrice: number;
+  liquidated?: boolean;
+  pnl?: number;
+  closePrice?: number | null;
+};
+
+export type Bal = { balance: number; decimal: number };
+
+export type EngineReply =
+  | { ok: true; orderId: string }
+  | { ok: true; pnl: number; balance_usd?: number }
+  | Record<string, { balance: number; decimals: number }>
+  | { balance: number }
+  | { ok: false; error: string };
