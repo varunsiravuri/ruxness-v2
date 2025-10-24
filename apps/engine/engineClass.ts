@@ -1,7 +1,9 @@
 import { createClient, type RedisClientType } from "redis";
 import { MongoClient } from "mongodb";
 import crypto from "node:crypto";
+import { PrismaClient, Symbol as AssetSymbol } from "@prisma/client"; 
 type Side = "long" | "short";
+import { CloseReason } from "@prisma/client";
 
 export type Bal = { balance: number; decimal: number };
 export type Px = { mid: number; decimal: number; ts: number };
@@ -59,27 +61,20 @@ const fromInt4 = (i: number) => i / 10_000;
 export class Engine {
   private r: RedisClientType;
   private m: MongoClient;
-  private balances: Record<string, Bal> = {};
-  private openOrders: Record<string, OpenOrder[]> = {};
   private prices: Record<string, Px> = {};
   private lastOrderId = "$";
   private lastPriceId = "$";
   private snaps!: import("mongodb").Collection;
 
-  private ensureBucket(userId: string): OpenOrder[] {
-    return (this.openOrders[userId] ??= []);
-  }
-  private ensureBalance(userId: string): { balance: number; decimal: number } {
-    return (this.balances[userId] ??= { balance: 0, decimal: 2 });
-  }
-
   constructor(
     private redisUrl: string,
     private mongoUrl: string,
-    private dbName: string
+    private dbName: string,
+    private prisma: PrismaClient
   ) {
     this.r = createClient({ url: redisUrl });
     this.m = new MongoClient(mongoUrl);
+    this.prisma = prisma;
   }
 
   async start() {
@@ -89,20 +84,19 @@ export class Engine {
     this.snaps = this.m.db(this.dbName).collection(SNAPCOLL);
     const snap = await this.snaps.findOne({}, { sort: { ts: -1 } });
     if (snap) {
-      this.balances = snap.balances ?? {};
-      this.openOrders = snap.openOrders ?? {};
       this.prices = snap.prices ?? {};
       this.lastOrderId = snap.lastOrderId ?? "$";
       this.lastPriceId = snap.lastPriceId ?? "$";
       console.log(
-        "[engine] restored snapshot @",
+        "[engine] restored price cache @",
         new Date(snap.ts).toISOString()
       );
     }
     setInterval(() => this.snapshot().catch(() => {}), 10_000);
     setInterval(() => this.checkLiquidations().catch(() => {}), 1_000);
+
     this.runOrdersLoop().catch(this.crash);
-    this.runPricesLoop().catch(this.crash);
+    this.runOrdersLoop().catch((e) => console.error("RUNLOOP ERROR", e));
 
     console.log("[engine] up:", {
       ordersStream: ORDERS_STREAM,
@@ -119,8 +113,6 @@ export class Engine {
   private async snapshot() {
     await this.snaps.insertOne({
       ts: Date.now(),
-      balances: this.balances,
-      openOrders: this.openOrders,
       prices: this.prices,
       lastOrderId: this.lastOrderId,
       lastPriceId: this.lastPriceId,
@@ -164,6 +156,7 @@ export class Engine {
   }
 
   private async runOrdersLoop() {
+    console.log("[engine] starting runOrdersLoop");
     for (;;) {
       const res = (await this.r.xRead(
         [{ key: ORDERS_STREAM, id: this.lastOrderId }],
@@ -200,7 +193,7 @@ export class Engine {
               await this.onGetUserBal(cmd as GetUserBalCmd);
               break;
 
-            case "closePosition":
+            case "createPosition":
               await this.onTradeOpen({
                 id: cmd.id,
                 kind: "trade-open",
@@ -208,13 +201,13 @@ export class Engine {
                 asset: cmd.asset,
                 type: cmd.type,
                 leverage: cmd.leverage,
-                margin: cmd.margin, // dollars
+                margin: cmd.margin,
                 expectedPrice: undefined,
                 slippage: cmd.slippage,
               } as CreateCmd);
               break;
 
-            case "createPosition":
+            case "closePosition":
               await this.onTradeClose({
                 id: cmd.id,
                 kind: "trade-close",
@@ -224,21 +217,42 @@ export class Engine {
               break;
 
             case "getBalanceUsd": {
-              const b = this.ensureBalance(String(cmd.userId ?? ""));
-              await this.reply(cmd.id, { balance: b.balance });
+              const userId = String(cmd.userId ?? "");
+              const usdcAsset = await this.prisma.asset.findUnique({
+                where: {
+                  user_symbol_unique: { userId, symbol: "USDC" as AssetSymbol },
+                },
+              });
+              await this.reply(cmd.id, { balance: usdcAsset?.balance ?? 0 });
+              break;
+            }
+
+            case "getOpenOrders": {
+              const userId = String(cmd.userId ?? "");
+              const openOrders = await this.prisma.order.findMany({
+                where: { userId, status: "open" },
+                orderBy: { createdAt: "desc" },
+              });
+              await this.reply(cmd.id, { orders: openOrders });
               break;
             }
 
             case "getBalances": {
               const userId = String(cmd.userId ?? "");
+              const assets = await this.prisma.asset.findMany({
+                where: { userId },
+              });
               const out: Record<string, { balance: number; decimals: number }> =
                 {};
-              for (const o of this.openOrders[userId] ?? []) {
-                const sym = o.asset.toUpperCase();
-                if (!out[sym]) out[sym] = { balance: 0, decimals: 4 };
-                out[sym].balance += (o.side === "long" ? 1 : -1) * o.margin;
+
+              for (const asset of assets) {
+                out[asset.symbol] = {
+                  balance: asset.balance,
+                  decimals: asset.decimals,
+                };
               }
-              for (const s of ["BTC", "ETH", "SOL"]) {
+
+              for (const s of ["BTC", "ETH", "SOL", "USDC"]) {
                 if (!out[s]) out[s] = { balance: 0, decimals: 4 };
               }
               await this.reply(cmd.id, out);
@@ -251,11 +265,9 @@ export class Engine {
                 error: "UNKNOWN_KIND",
               });
           }
-        } catch (e: any) {
-          await this.reply(cmd?.id ?? crypto.randomUUID(), {
-            status: "rejected",
-            error: String(e?.message ?? e),
-          });
+        } catch (err) {
+          console.error("runOrdersLoop ERROR", err); 
+          await new Promise((r) => setTimeout(r, 1000));
         }
       }
     }
@@ -265,10 +277,36 @@ export class Engine {
     const userId = String(cmd.userId ?? "");
     if (!userId) throw new Error("userId required");
 
-    if (!this.balances[userId]) {
-      this.balances[userId] = { balance: 5_000_00, decimal: 2 };
+    let user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
+          id: userId,
+          email: cmd.email ?? `${userId}@example.com`,
+          password: cmd.password ?? "hashed",
+          name: cmd.name ?? "User",
+        },
+      });
     }
-    if (!this.openOrders[userId]) this.openOrders[userId] = [];
+    const symbols: AssetSymbol[] = ["BTC", "ETH", "SOL", "USDC"];
+    for (const symbol of symbols) {
+      const existing = await this.prisma.asset.findUnique({
+        where: { user_symbol_unique: { userId, symbol } },
+      });
+
+      if (!existing) {
+        await this.prisma.asset.create({
+          data: {
+            userId,
+            symbol,
+            balance: symbol === "USDC" ? 5_000_00 : 0,
+            decimals: 2,
+          },
+        });
+      }
+    }
 
     await this.reply(cmd.id, { status: "ok", note: "user initialized" });
   }
@@ -314,36 +352,44 @@ export class Engine {
       throw new Error("invalid margin");
     }
 
-    const wallet = this.ensureBalance(userId);
+    const assetRow = await this.prisma.asset.findUnique({
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
+    });
+    const walletBalance = assetRow?.balance ?? 0;
     const needCents = Math.round(marginDollars * 100);
-    if (wallet.balance < needCents) {
-      throw new Error("INSUFFICIENT_FUNDS");
-    }
+    if (walletBalance < needCents) throw new Error("INSUFFICIENT_FUNDS");
 
-    const { mid4 } = this.currentPx(asset);
-    this.ensureSlippageOK(cmd.expectedPrice, fromInt4(mid4), cmd.slippage);
+    await this.prisma.asset.update({
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
+      data: { balance: { decrement: needCents } },
+    });
     const marginInt4 = toInt4(marginDollars);
-    wallet.balance -= needCents;
+    const { mid4 } = this.currentPx(asset);
     const qty4 = Math.max(1, Math.floor((marginInt4 * lev) / mid4));
+    this.ensureSlippageOK(cmd.expectedPrice, fromInt4(mid4), cmd.slippage);
+    const order = await this.prisma.order.create({
+      data: {
+        userId,
+        side,
+        symbol: asset as AssetSymbol,
+        status: "open",
+        leverage: lev,
+        margin: needCents,
+        openingPrice: mid4,
+        qty: qty4,
+        decimals: 4,
+        pnl: 0,
+      },
+    });
 
-    const order: OpenOrder = {
-      id: crypto.randomUUID(),
-      userId,
-      asset,
-      side,
-      leverage: lev,
-      margin: marginInt4,
-      quantity: qty4,
-      openPrice: mid4,
-      decimal: 4,
-    };
-
-    (this.openOrders[userId] ??= []).push(order);
+    const updatedAsset = await this.prisma.asset.findUnique({
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
+    });
 
     await this.reply(cmd.id, {
       status: "accepted",
       orderId: order.id,
-      userBalanceCents: wallet.balance,
+      userBalanceCents: updatedAsset?.balance ?? 0,
     });
   }
 
@@ -351,89 +397,128 @@ export class Engine {
     const userId = String(cmd.userId ?? "");
     const orderId = String(cmd.orderId ?? "");
     if (!userId || !orderId) throw new Error("userId/orderId required");
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
 
-    const bucket: OpenOrder[] = this.openOrders[userId] ?? [];
-    const idx = bucket.findIndex((o) => o.id === orderId);
-    if (idx === -1) throw new Error("order not found");
-    const order = bucket[idx]!;
+    if (!order || order.status !== "open") {
+      throw new Error("order not found or already closed");
+    }
 
-    const { mid4 } = this.currentPx(order.asset);
-    const pnl4 = this.computePnl(order, mid4);
+    const { mid4 } = this.currentPx(order.symbol);
+
+    const change =
+      order.side === "long"
+        ? mid4 - order.openingPrice
+        : order.openingPrice - mid4;
+    const pnl4 = Math.floor((change * order.leverage * order.qty) / 10_000);
+
     const credit4 = order.margin + pnl4;
     const creditCents = Math.round(fromInt4(credit4) * 100);
 
-    this.ensureBalance(userId).balance += creditCents;
-    const wallet = this.ensureBalance(userId);
-    wallet.balance += creditCents;
-    order.closePrice = mid4;
-    order.pnl = pnl4;
-    order.liquidated = false;
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: "closed",
+        pnl: pnl4,
+        closingPrice: mid4,
+        closedAt: new Date(),
+      },
+    });
+    await this.prisma.asset.update({
+      where: {
+        user_symbol_unique: { userId, symbol: order.symbol as AssetSymbol },
+      },
+      data: { balance: { increment: creditCents } },
+    });
 
-    bucket.splice(idx, 1);
-    this.openOrders[userId] = bucket;
+    const updatedAsset = await this.prisma.asset.findUnique({
+      where: {
+        user_symbol_unique: { userId, symbol: order.symbol as AssetSymbol },
+      },
+    });
 
     await this.reply(cmd.id, {
       status: "closed",
       orderId: order.id,
       pnl4,
-      userBalanceCents: wallet.balance,
+      userBalanceCents: updatedAsset?.balance ?? 0,
     });
   }
 
   private async onGetUserBal(cmd: GetUserBalCmd) {
     const userId = String(cmd.userId ?? "");
     if (!userId) throw new Error("userId required");
-    const bal = this.ensureBalance(userId);
-    await this.reply(cmd.id, { balance: bal.balance });
+    const usdcAsset = await this.prisma.asset.findUnique({
+      where: {
+        user_symbol_unique: { userId, symbol: "USDC" as AssetSymbol },
+      },
+    });
+
+    await this.reply(cmd.id, { balance: usdcAsset?.balance ?? 0 });
   }
 
   private async checkLiquidations() {
     const now = Date.now();
+
+    const openOrders = await this.prisma.order.findMany({
+      where: { status: "open" },
+    });
+
     const ops: Array<Promise<any>> = [];
 
-    for (const [userId, orders] of Object.entries(this.openOrders)) {
-      const bucket = this.ensureBucket(userId);
+    for (const o of openOrders) {
+      const px = this.prices[o.symbol];
+      if (!px) continue;
 
-      for (const o of [...orders]) {
-        const px = this.prices[o.asset];
-        if (!px) continue;
+      const cur4 = toInt4(px.mid);
 
-        const cur4 = toInt4(px.mid);
-        const pnl4 = this.computePnl(o, cur4);
-        const lossCapacity4 = Math.floor(o.margin / o.leverage);
+      const change =
+        o.side === "long" ? cur4 - o.openingPrice : o.openingPrice - cur4;
+      const pnl4 = Math.floor((change * o.leverage * o.qty) / 10_000);
 
-        if (pnl4 < -Math.floor(0.9 * lossCapacity4)) {
-          const credit4 = o.margin + pnl4;
-          const creditCents = Math.round(fromInt4(credit4) * 100);
+      const lossCapacity4 = Math.floor(o.margin / o.leverage);
 
-          this.ensureBalance(userId).balance += creditCents;
-
-          o.closePrice = cur4;
-          o.pnl = pnl4;
-          o.liquidated = true;
-
-          this.openOrders[userId] = bucket.filter((x) => x.id !== o.id);
-
-          ops.push(
-            this.reply(crypto.randomUUID(), {
-              status: "liquidated",
-              orderId: o.id,
-              userId,
-              asset: o.asset,
-              pnl4,
-              ts: now,
-            })
-          );
-        }
+      if (pnl4 < -Math.floor(0.9 * lossCapacity4)) {
+        const credit4 = o.margin + pnl4;
+        const creditCents = Math.round(fromInt4(credit4) * 100);
+        ops.push(
+          this.prisma.order.update({
+            where: { id: o.id },
+            data: {
+              status: "closed",
+              pnl: pnl4,
+              closingPrice: cur4,
+              closedAt: new Date(),
+              closeReason: CloseReason.Liquidation,
+            },
+          })
+        );
+        ops.push(
+          this.prisma.asset.update({
+            where: {
+              user_symbol_unique: {
+                userId: o.userId,
+                symbol: o.symbol as AssetSymbol,
+              },
+            },
+            data: { balance: { increment: creditCents } },
+          })
+        );
+        ops.push(
+          this.reply(crypto.randomUUID(), {
+            status: "liquidated",
+            orderId: o.id,
+            userId: o.userId,
+            asset: o.symbol,
+            pnl4,
+            ts: now,
+          })
+        );
       }
     }
 
     if (ops.length) await Promise.allSettled(ops);
-  }
-
-  private computePnl(o: OpenOrder, cur4: number): number {
-    const change = o.side === "long" ? cur4 - o.openPrice : o.openPrice - cur4;
-    return Math.floor((change * o.leverage * o.quantity) / 10_000);
   }
 
   private async reply(id: string, payload: any) {
@@ -442,3 +527,4 @@ export class Engine {
     });
   }
 }
+
