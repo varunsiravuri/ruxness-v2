@@ -8,13 +8,11 @@ type Redis = RedisClientType;
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 const COOKIE_NAME = process.env.COOKIE_NAME ?? "ssid";
-const TOKEN_TTL_S = 5 * 60; // 5 minutes
-const SESSION_TTL_S = 5 * 24 * 3600; // 5 days
+const TOKEN_TTL_S = 10 * 60;
+const SESSION_TTL_S = 5 * 24 * 3600;
 
 export function authRoutes(redis: Redis) {
   const r = Router();
-
-  // Send magic link (respond immediately; send mail in background)
   r.post("/magic", async (req, res) => {
     const email = String(req.body?.email ?? "")
       .trim()
@@ -27,10 +25,8 @@ export function authRoutes(redis: Redis) {
     await redis.setEx(`auth:token:${token}`, TOKEN_TTL_S, email);
     const url = `${APP_URL}/api/v1/auth/callback?token=${token}`;
 
-    // respond first so curl never hangs
     res.json({ ok: true, dev_link: url });
 
-    // fire-and-forget email with short timeout
     const send = sendMagicLink(email, url);
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("send timeout")), 3000)
@@ -40,7 +36,7 @@ export function authRoutes(redis: Redis) {
       .catch((e) => console.warn("[mail] sendMagicLink failed:", e));
   });
 
-  // Verify token, set session cookie
+  
   r.get("/callback", async (req, res) => {
     const token = String(req.query?.token ?? "");
     if (!token) return res.status(400).send("Token is Missing Bro");
@@ -62,14 +58,14 @@ export function authRoutes(redis: Redis) {
     res.cookie(COOKIE_NAME, sid, {
       httpOnly: true,
       sameSite: "lax",
-      secure: false, // set true behind HTTPS/proxy
+      secure: false,
       maxAge: SESSION_TTL_S * 1000,
       path: "/",
     });
 
     res.status(200).send(`<html><body style="font-family:system-ui">
                <h3>Signed in</h3>
-               <p>You Can Close this Bhaiya</p>
+               <p>You Can Close this Bro</p>
              </body></html>`);
   });
 

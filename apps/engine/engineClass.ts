@@ -1,6 +1,7 @@
 import { createClient, type RedisClientType } from "redis";
 import { MongoClient } from "mongodb";
 import crypto from "node:crypto";
+import { PrismaClient, Symbol as AssetSymbol } from "@prisma/client"; 
 type Side = "long" | "short";
 
 export type Bal = { balance: number; decimal: number };
@@ -76,10 +77,12 @@ export class Engine {
   constructor(
     private redisUrl: string,
     private mongoUrl: string,
-    private dbName: string
+    private dbName: string,
+    private prisma: PrismaClient 
   ) {
     this.r = createClient({ url: redisUrl });
     this.m = new MongoClient(mongoUrl);
+    this.prisma = prisma;
   }
 
   async start() {
@@ -314,36 +317,45 @@ export class Engine {
       throw new Error("invalid margin");
     }
 
-    const wallet = this.ensureBalance(userId);
+    const assetRow = await this.prisma.asset.findUnique({
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol} },
+    });
+    const walletBalance = assetRow?.balance ?? 0;
     const needCents = Math.round(marginDollars * 100);
-    if (wallet.balance < needCents) {
-      throw new Error("INSUFFICIENT_FUNDS");
-    }
+    if (walletBalance < needCents) throw new Error("INSUFFICIENT_FUNDS");
 
-    const { mid4 } = this.currentPx(asset);
-    this.ensureSlippageOK(cmd.expectedPrice, fromInt4(mid4), cmd.slippage);
-    const marginInt4 = toInt4(marginDollars);
-    wallet.balance -= needCents;
+    await this.prisma.asset.update({
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol} },
+      data: { balance: { decrement: needCents } },
+    });
+    const marginInt4 = toInt4(marginDollars);  
+    const { mid4 } = this.currentPx(asset);  
     const qty4 = Math.max(1, Math.floor((marginInt4 * lev) / mid4));
 
-    const order: OpenOrder = {
-      id: crypto.randomUUID(),
-      userId,
-      asset,
-      side,
-      leverage: lev,
-      margin: marginInt4,
-      quantity: qty4,
-      openPrice: mid4,
-      decimal: 4,
-    };
 
-    (this.openOrders[userId] ??= []).push(order);
+    const order = await this.prisma.order.create({
+      data: {
+        userId,
+        side,
+        symbol: asset as AssetSymbol,
+        status: "open",
+        leverage: lev,
+        margin: needCents,
+        openingPrice: mid4,
+        qty: qty4,
+        decimals: 4,
+        pnl: 0,
+      },
+    });
+
+     const updatedAsset = await this.prisma.asset.findUnique({
+       where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
+     });
 
     await this.reply(cmd.id, {
       status: "accepted",
       orderId: order.id,
-      userBalanceCents: wallet.balance,
+      userBalanceCents: updatedAsset?.balance ?? 0,
     });
   }
 
