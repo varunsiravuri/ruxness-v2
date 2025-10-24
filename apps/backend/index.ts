@@ -8,6 +8,7 @@ import { prisma } from "@ruxness/db";
 import {authRoutes} from "./routes/auth";
 import {makeRequireUser} from "./middleware/requireUser";
 import cookieParser from "cookie-parser"; 
+
  
 const PORT = Number(process.env.PORT ?? 3000);
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
@@ -17,6 +18,7 @@ async function main() {
   const app = express();
   app.use(express.json());
   app.use(cookieParser());  
+  app.use(makeRequireUser);  
   const bus = makeBus(REDIS_URL);
   await bus.start();
   
@@ -28,6 +30,7 @@ async function main() {
   v1.use("/", supportedAssetsRoutes());
   app.use("/api/v1", v1);
 
+  app.get("/health", (_req, res) => res.json({ ok: true }));
   app.listen(PORT, () => {
     console.log(`[backend] listening on :${PORT}`);
   });

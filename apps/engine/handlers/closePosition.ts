@@ -1,28 +1,26 @@
-import { prisma } from "@ruxness/db";
-import type { ClosePositionCmd } from "../types";
-export async function closePosition(
-  cmd: ClosePositionCmd,
-  getPx: (a: string) => Promise<number>
-) {
-  const tr = await prisma.existingTrade.findUnique({
-    where: { id: cmd.orderId },
-    include: { asset: true, user: true },
-  });
-  if (!tr) throw new Error("trade not found");
-  if (tr.closePrice !== null) throw new Error("already closed");
+// apps/backend/handlers/closePosition.ts
+export async function closePosition(bus: any, userId: string, orderId: string) {
+  if (!userId) throw new Error("userId required");
+  if (!orderId) throw new Error("orderId required");
 
-  const px = await getPx(tr.asset.symbol);
-  const pnl = (tr.side === "long" ? 1 : -1) * (px - tr.openPrice) * tr.qty;
-
-  await prisma.existingTrade.update({
-    where: { id: tr.id },
-    data: { closePrice: px, pnl },
+  const ack = await bus.send("trade-close", {
+    id: Date.now().toString(),
+    userId,
+    orderId,
   });
 
-  await prisma.user.update({
-    where: { id: tr.userId },
-    data: { usdBalanceCents: { increment: Math.round(pnl * 100) } },
-  });
+  if (ack?.status === "closed" || ack?.ok === true) {
+    // Engine typically returns: { status: "closed", orderId, pnl4, userBalanceCents, ... }
+    return {
+      ok: true,
+      orderId: ack.orderId ?? orderId,
+      pnl4: ack.pnl4 ?? null,
+      balance_usd:
+        typeof ack.userBalanceCents === "number"
+          ? ack.userBalanceCents / 100
+          : undefined,
+    };
+  }
 
-  return { pnl };
+  throw new Error(ack?.error || "engine rejected");
 }

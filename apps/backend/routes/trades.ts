@@ -1,30 +1,17 @@
 import { Router } from "express";
-import type { makeBus } from "../lib/bus";
-type Bus = ReturnType<typeof makeBus>;
-
-export function tradeRoutes(bus: Bus) {
+import { createPosition } from "engine/handlers/createPosition";
+import { closePosition } from "engine/handlers/closePosition";
+export function tradeRoutes(bus: any) {
   const r = Router();
 
   r.post("/create", async (req, res) => {
     try {
       const userId = (req as any).user?.id;
-      if (!userId) {
+      if (!userId)
         return res.status(401).json({ ok: false, error: "Session nahi hai " });
-      }
-      const { asset, type, margin, leverage, slippage } = req.body ?? {};
-      if (
-        !asset ||
-        !["long", "short"].includes(type) ||
-        !Number.isFinite(margin) ||
-        !Number.isFinite(leverage)
-      ) {
-        return res.status(400).json({
-          error:
-            "asset, type('long'|'short'), margin(number), leverage(number)",
-        });
-      }
 
-      const reply = await bus.send("trade-open", {
+      const { asset, type, margin, leverage, slippage } = req.body ?? {};
+      const out = await createPosition(bus, {
         userId,
         asset,
         type,
@@ -32,8 +19,7 @@ export function tradeRoutes(bus: Bus) {
         leverage,
         slippage,
       });
-
-      return res.json({ orderId: reply?.orderId });
+      return res.json(out);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const code = /timeout/i.test(msg) ? 504 : 400;
@@ -44,16 +30,14 @@ export function tradeRoutes(bus: Bus) {
   r.post("/close", async (req, res) => {
     try {
       const userId = (req as any).user?.id;
-      if (!userId) {
+      if (!userId)
         return res.status(401).json({ ok: false, error: "Session nahi hai " });
-      }
-      const { orderId } = req.body ?? {};
-      if (!orderId) {
-        return res.status(400).json({ error: "orderId required" });
-      }
 
-      const reply = await bus.send("trade-close", { userId, orderId });
-      return res.json(reply ?? { ok: true });
+      const { orderId } = req.body ?? {};
+      if (!orderId) return res.status(400).json({ error: "orderId required" });
+
+      const out = await closePosition(bus, userId, orderId);
+      return res.json(out);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       const code = /timeout/i.test(msg) ? 504 : 400;

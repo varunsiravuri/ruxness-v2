@@ -8,31 +8,39 @@ type Redis = RedisClientType;
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 const COOKIE_NAME = process.env.COOKIE_NAME ?? "ssid";
-const TOKEN_TTL_S = 5 * 60; 
-const SESSION_TTL_S = 5 * 24 * 3600;
+const TOKEN_TTL_S = 5 * 60; // 5 minutes
+const SESSION_TTL_S = 5 * 24 * 3600; // 5 days
 
 export function authRoutes(redis: Redis) {
   const r = Router();
 
-  r.post("/magic", async (req, res, next) => {
-    try {
-      const email = String(req.body?.email ?? "")
-        .trim()
-        .toLowerCase();
-      if (!email || !email.includes("@")) {
-        return res.status(400).json({ ok: false, error: "invalid email" });
-      }
-      const token = randomUUID();
-      await redis.setEx(`auth:token:${token}`, TOKEN_TTL_S, email);
-      const url = `${APP_URL}/api/v1/auth/callback?token=${token}`;
-      await sendMagicLink(email, url);
-      res.json({ ok: true, dev_link: url });
-    } catch (e) {
-      console.error("[auth] sendMagicLink failed:", e);
-      res.json({ ok: true});
+  // Send magic link (respond immediately; send mail in background)
+  r.post("/magic", async (req, res) => {
+    const email = String(req.body?.email ?? "")
+      .trim()
+      .toLowerCase();
+    if (!email || !email.includes("@")) {
+      return res.status(400).json({ ok: false, error: "invalid email" });
     }
+
+    const token = randomUUID();
+    await redis.setEx(`auth:token:${token}`, TOKEN_TTL_S, email);
+    const url = `${APP_URL}/api/v1/auth/callback?token=${token}`;
+
+    // respond first so curl never hangs
+    res.json({ ok: true, dev_link: url });
+
+    // fire-and-forget email with short timeout
+    const send = sendMagicLink(email, url);
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("send timeout")), 3000)
+    );
+    Promise.race([send, timeout])
+      .then(() => console.log("[mail] queued"))
+      .catch((e) => console.warn("[mail] sendMagicLink failed:", e));
   });
 
+  // Verify token, set session cookie
   r.get("/callback", async (req, res) => {
     const token = String(req.query?.token ?? "");
     if (!token) return res.status(400).send("Token is Missing Bro");
@@ -40,7 +48,7 @@ export function authRoutes(redis: Redis) {
     const email = await redis.get(`auth:token:${token}`);
     if (!email) return res.status(400).send("Link Expired Bhaiya");
     await redis.del(`auth:token:${token}`);
-    
+
     await prisma.user.upsert({
       where: { email },
       update: {},
@@ -54,7 +62,7 @@ export function authRoutes(redis: Redis) {
     res.cookie(COOKIE_NAME, sid, {
       httpOnly: true,
       sameSite: "lax",
-      secure: false, 
+      secure: false, // set true behind HTTPS/proxy
       maxAge: SESSION_TTL_S * 1000,
       path: "/",
     });
