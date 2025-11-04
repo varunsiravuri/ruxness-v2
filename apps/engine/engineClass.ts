@@ -70,7 +70,11 @@ export class Engine {
     private redisUrl: string,
     private mongoUrl: string,
     private dbName: string,
+<<<<<<< HEAD
     private prisma: PrismaClient
+=======
+    private prisma: PrismaClient 
+>>>>>>> 0f6789623b3999f4abbdb26c3318ffb023ff4853
   ) {
     this.r = createClient({ url: redisUrl });
     this.m = new MongoClient(mongoUrl);
@@ -353,18 +357,30 @@ export class Engine {
     }
 
     const assetRow = await this.prisma.asset.findUnique({
+<<<<<<< HEAD
       where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
+=======
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol} },
+>>>>>>> 0f6789623b3999f4abbdb26c3318ffb023ff4853
     });
     const walletBalance = assetRow?.balance ?? 0;
     const needCents = Math.round(marginDollars * 100);
     if (walletBalance < needCents) throw new Error("INSUFFICIENT_FUNDS");
 
     await this.prisma.asset.update({
+<<<<<<< HEAD
       where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
       data: { balance: { decrement: needCents } },
     });
     const marginInt4 = toInt4(marginDollars);
     const { mid4 } = this.currentPx(asset);
+=======
+      where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol} },
+      data: { balance: { decrement: needCents } },
+    });
+    const marginInt4 = toInt4(marginDollars);  
+    const { mid4 } = this.currentPx(asset);  
+>>>>>>> 0f6789623b3999f4abbdb26c3318ffb023ff4853
     const qty4 = Math.max(1, Math.floor((marginInt4 * lev) / mid4));
     this.ensureSlippageOK(cmd.expectedPrice, fromInt4(mid4), cmd.slippage);
     const order = await this.prisma.order.create({
@@ -382,9 +398,31 @@ export class Engine {
       },
     });
 
+<<<<<<< HEAD
     const updatedAsset = await this.prisma.asset.findUnique({
       where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
     });
+=======
+
+    const order = await this.prisma.order.create({
+      data: {
+        userId,
+        side,
+        symbol: asset as AssetSymbol,
+        status: "open",
+        leverage: lev,
+        margin: needCents,
+        openingPrice: mid4,
+        qty: qty4,
+        decimals: 4,
+        pnl: 0,
+      },
+    });
+
+     const updatedAsset = await this.prisma.asset.findUnique({
+       where: { user_symbol_unique: { userId, symbol: asset as AssetSymbol } },
+     });
+>>>>>>> 0f6789623b3999f4abbdb26c3318ffb023ff4853
 
     await this.reply(cmd.id, {
       status: "accepted",
