@@ -23,11 +23,14 @@
     "packages/*"
   ],
   "dependencies": {
+    "@types/cors": "^2.8.19",
     "@types/mongodb": "^4.0.7",
     "@types/ws": "^8.18.1",
     "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
     "ioredis": "^5.7.0",
     "mongodb": "^6.19.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zod": "^4.1.12"
   }
 }

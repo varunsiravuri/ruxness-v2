@@ -4,21 +4,21 @@ import { makeBus } from "./lib/bus";
 import { tradeRoutes } from "./routes/trades";
 import { balanceRoutes } from "./routes/balance";
 import { supportedAssetsRoutes } from "./routes/supportedAssets";
-import { prisma } from "@ruxness/db";
 import {authRoutes} from "./routes/auth";
 import {makeRequireUser} from "./middleware/requireUser";
 import cookieParser from "cookie-parser"; 
+import cors from "cors";
+import { candlesRoutes } from "./routes/candles";
 
  
 const PORT = Number(process.env.PORT ?? 3000);
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6380";
-const user = await prisma.user.findFirst();
 
 async function main() {
   const app = express();
+  app.use(cors({ origin: "http://localhost:3200", credentials: true }));
   app.use(express.json());
-  app.use(cookieParser());  
-  app.use(makeRequireUser);  
+  app.use(cookieParser());
   const bus = makeBus(REDIS_URL);
   await bus.start();
   
@@ -28,9 +28,19 @@ async function main() {
   v1.use("/trade",requireUser, tradeRoutes(bus));
   v1.use("/balance",requireUser,balanceRoutes(bus));
   v1.use("/", supportedAssetsRoutes());
+  v1.use("/", candlesRoutes());
+
   app.use("/api/v1", v1);
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
+  if (app._router && app._router.stack) {
+    app._router.stack
+      .filter((r: any) => r.route)
+      .forEach((r: any) => console.log(r.route.path, Object.keys(r.route.methods)));
+  }
+
+  app.get("/test-root", (req, res) => res.json({ test: true }));
+
   app.listen(PORT, () => {
     console.log(`[backend] listening on :${PORT}`);
   });
@@ -38,11 +48,6 @@ async function main() {
   app.use((req, _res, next) => {
     console.log("[dbg] cookie:", req.headers.cookie);
     next();
-  });
-  app.get("/api/v1/debug/whoami", async (req, res) => {
-    const sid = req.cookies?.ssid;
-    const email = sid ? await bus.redis.get(`auth:sid:${sid}`) : null;
-    res.json({ sid: sid ?? null, email: email ?? null });
   });
 
   app.get("/api/v1/debug/cookies", (req, res) => {

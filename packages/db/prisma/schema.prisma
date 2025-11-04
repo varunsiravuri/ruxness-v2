@@ -34,7 +34,8 @@ enum CloseReason {
 model User {
   id       String  @id @default(uuid()) @db.Uuid
   email    String  @unique
-  password String
+  usdBalanceCents  Int     @default(0)
+  password String?
   name     String
   decimal  Int     @default(2)
   assets   Asset[]

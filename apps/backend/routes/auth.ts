@@ -9,7 +9,7 @@ type Redis = RedisClientType;
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 const COOKIE_NAME = process.env.COOKIE_NAME ?? "ssid";
 const TOKEN_TTL_S = 10 * 60;
-const SESSION_TTL_S = 5 * 24 * 3600;
+const SESSION_TTL_S = 10 * 24 * 3600;
 
 export function authRoutes(redis: Redis) {
   const r = Router();
@@ -24,7 +24,7 @@ export function authRoutes(redis: Redis) {
     const token = randomUUID();
     await redis.setEx(`auth:token:${token}`, TOKEN_TTL_S, email);
     const url = `${APP_URL}/api/v1/auth/callback?token=${token}`;
-
+    console.log("[magic] about to respond", { email, url });
     res.json({ ok: true, dev_link: url });
 
     const send = sendMagicLink(email, url);
@@ -48,7 +48,7 @@ export function authRoutes(redis: Redis) {
     await prisma.user.upsert({
       where: { email },
       update: {},
-      create: { email, usdBalanceCents: 0 },
+      create: { email, name: email.split("@")[0], usdBalanceCents: 0 , password: null },
     });
 
     const sid = randomUUID();
@@ -63,11 +63,11 @@ export function authRoutes(redis: Redis) {
       path: "/",
     });
 
-    res.status(200).send(`<html><body style="font-family:system-ui">
-               <h3>Signed in</h3>
-               <p>You Can Close this Bro</p>
-             </body></html>`);
+    res.redirect("http://localhost:3200/marketplace");
   });
+  r.post("/testinner", (req, res) => res.json({ postInner: true }));
+
+  r.get("/testinner", (_req, res) => res.json({ inner: true }));
 
   return r;
 }
